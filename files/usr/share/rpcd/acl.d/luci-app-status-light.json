@@ -1,0 +1,14 @@
+{
+	"luci-app-status-light": {
+		"description": "Grant access to the Status Light settings",
+		"read": {
+			"uci": [ "status_light", "system" ],
+			"file": {
+				"/tmp/status-light.json": [ "read" ]
+			}
+		},
+		"write": {
+			"uci": [ "status_light", "system" ]
+		}
+	}
+}

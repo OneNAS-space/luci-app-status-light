@@ -1,0 +1,39 @@
+{
+	"admin/system/leds": {
+		"action": {
+			"type": "firstchild"
+		}
+	},
+	"admin/system/leds/config": {
+		"title": "LED Configuration",
+		"order": 1,
+		"action": {
+			"type": "view",
+			"path": "system/leds"
+		},
+		"depends": {
+			"acl": [
+				"luci-mod-system-config"
+			],
+			"fs": {
+				"/sys/class/leds": "directory"
+			}
+		}
+	},
+	"admin/system/leds/status-light": {
+		"title": "Status Light",
+		"order": 2,
+		"action": {
+			"type": "view",
+			"path": "status-light/config"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-status-light"
+			],
+			"fs": {
+				"/sys/class/leds": "directory"
+			}
+		}
+	}
+}

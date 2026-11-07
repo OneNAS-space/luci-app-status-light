@@ -1,0 +1,290 @@
+#!/bin/sh
+# status-light - follow the internet state on the RGB status LED (SBE1V1K).
+#
+# Every address family (IPv4, IPv6) is probed on its own and is
+#   none  no default route (tunnels like wg*/tun* do not count)
+#   ok    a default route and something answers (ping, or a direct query to an upstream DNS)
+#   down  a default route, but nothing answers
+# DNS: the router's own resolver must answer; with dns_strict=1 an upstream server must
+# answer a direct query too (that one bypasses the resolver cache).
+#
+#   #  IPv4  IPv6  DNS    meaning
+#   1  ok    ok    ok     all fine                 (default: the system LED config shows it)
+#   2  ok    none  ok     IPv4-only network
+#   3  none  ok    ok     IPv6-only network
+#   4  ok    down  ok     IPv6 broken
+#   5  down  ok    ok     IPv4 broken
+#   6  one family answers, DNS fails
+#   7  routes exist, nothing answers at all
+#   8  no uplink
+# What each scenario looks like, and every probe setting, is in /etc/config/status_light.
+# The state is written to the state file (JSON) after every check.
+#
+#   status-light        run (procd starts it: /etc/init.d/status-light)
+#   status-light once   print the state as JSON once and exit, LEDs untouched
+
+[ "$1" = once ] && ONCE=1
+UCI=${UCI:-uci}
+# cfg <option> <default> : option of status_light.main, or the default when it is not set.
+# The value "none" means "empty" (a list option cannot be empty in uci).
+cfg() {
+	local v
+	if v="$($UCI -q get "status_light.main.$1" 2>/dev/null)" && [ -n "$v" ]; then
+		[ "$v" = none ] && v=""; echo "$v"
+	else echo "$2"; fi
+}
+# look <n> <default> : "<red> <green> <blue> <solid|flashing|system> [half-period]" of scenario n
+# (mode "easing", only offered for scenario 1, is the same as "system" here: the LED goes back to the system LED configuration)
+look() {
+	local r g b m h
+	r="$($UCI -q get "status_light.s$1.red" 2>/dev/null)"; g="$($UCI -q get "status_light.s$1.green" 2>/dev/null)"
+	b="$($UCI -q get "status_light.s$1.blue" 2>/dev/null)"; m="$($UCI -q get "status_light.s$1.mode" 2>/dev/null)"
+	h="$($UCI -q get "status_light.s$1.half" 2>/dev/null)"
+	# no mode in uci (LuCI leaves an option out when it equals the form default): guess it
+	if [ -z "$m" ]; then
+		if [ -n "$h" ]; then m=flashing
+		elif [ -n "$r$g$b" ]; then m=solid
+		else echo "$2"; return; fi
+	fi
+	case "$m" in system|easing) echo system; return ;; esac    # "easing": the system LED configuration breathes
+	echo "${r:-0} ${g:-0} ${b:-0} $m $h"
+}
+
+# load_config: (re)read /etc/config/status_light; called at start and whenever the file changes
+load_config() {
+	LEDS=${LEDS:-/sys/class/leds}
+	INT_OK=$(cfg interval_ok 30); INT_BAD=$(cfg interval_bad 5); INT_FAST=$(cfg interval_fast 2)
+	FAILS=$(cfg fails 2)                    # a worse scenario must be seen this many checks in a row
+	HOSTS4=$(cfg hosts4 "223.5.5.5 119.29.29.29")
+	HOSTS6=$(cfg hosts6 "2400:3200::1")
+	DNS_NAME=$(cfg dns_name www.baidu.com)
+	DNS_UPSTREAM4=$(cfg dns_upstream4 "223.5.5.5 119.29.29.29")   # "none" = no direct query
+	DNS_UPSTREAM6=$(cfg dns_upstream6 "2400:3200::1 2402:4e00::")
+	DNS_STRICT=$(cfg dns_strict 1)
+	DNS_TIMEOUT=$(cfg dns_timeout 3)
+	PING_TIMEOUT=$(cfg ping_timeout 2)
+	MONITOR=$(cfg monitor ubus)             # ubus | route | "ubus route" | none
+	TUNNELS=$(cfg tunnels "wg* tun* tap* tailscale* utun* zt*")   # never counted as the uplink
+	STATE_FILE=$(cfg state_file /tmp/status-light.json)
+	FLASH_HALF=$(cfg flash_half "")
+	STATE_1=$(look 1 system)
+	STATE_2=$(look 2 "0 255 0 solid")
+	STATE_3=$(look 3 "0 45 255 solid")
+	STATE_4=$(look 4 "0 255 0 flashing 1")
+	STATE_5=$(look 5 "0 0 255 flashing 1")
+	STATE_6=$(look 6 "255 115 0 flashing")
+	STATE_7=$(look 7 "255 30 0 solid")
+	STATE_8=$(look 8 "255 0 0 solid")
+	HALF=${FLASH_HALF:-${HALF_DEF:-0.25}}
+}
+load_config
+
+find_led() { for d in "$LEDS/$1:status" "$LEDS"/*"$1"*status*; do [ -d "$d" ] && { echo "$d"; return; }; done; }
+LED_R=${LED_R:-$(find_led red)}; LED_G=${LED_G:-$(find_led green)}; LED_B=${LED_B:-$(find_led blue)}
+
+# ---- what the router sees -------------------------------------------------
+default_dev() {		# $1 = -4 | -6 : first default-route device that is not a tunnel
+	ip "$1" route show default 2>/dev/null | sed -n 's/^default.* dev \([^ ]*\).*/\1/p' | while read -r d; do
+		skip=0; for p in $TUNNELS; do case "$d" in $p) skip=1 ;; esac; done
+		[ $skip = 0 ] && { echo "$d"; break; }
+	done
+}
+# All probes of one check run at the same time, so a broken network costs one timeout
+# (about DNS_TIMEOUT seconds), not the sum of all of them.
+PD=/tmp/status-light.$$.probe
+any() { local f; for f in "$PD/$1".*; do [ -e "$f" ] && return 0; done; return 1; }
+waitall() { local p; for p in "$@"; do while kill -0 "$p" 2>/dev/null; do wait "$p" 2>/dev/null; done; done; }
+
+# sets d4 d6 s4 s6 up4 up6 dsys dup sc   (up*/dup: 1|0|- ; dsys: ok|fail|-)
+observe() {
+	local pids="" h n u pk4=0 pk6=0
+	d4="$(default_dev -4)"; d6="$(default_dev -6)"
+	s4=none; s6=none; up4=-; up6=-; dsys=-; dup=-
+	rm -rf "$PD"; mkdir -p "$PD"
+	if [ -n "$d4" ]; then
+		n=0; for h in $HOSTS4; do n=$((n+1)); ( ping -c 1 -W "$PING_TIMEOUT" "$h" >/dev/null 2>&1 && : > "$PD/p4.$n" ) & pids="$pids $!"; done
+		n=0; for h in $DNS_UPSTREAM4; do n=$((n+1)); ( timeout "$DNS_TIMEOUT" nslookup "$DNS_NAME" "$h" >/dev/null 2>&1 && : > "$PD/u4.$n" ) & pids="$pids $!"; done
+	fi
+	if [ -n "$d6" ]; then
+		n=0; for h in $HOSTS6; do n=$((n+1)); ( ping6 -c 1 -W "$PING_TIMEOUT" "$h" >/dev/null 2>&1 && : > "$PD/p6.$n" ) & pids="$pids $!"; done
+		n=0; for h in $DNS_UPSTREAM6; do n=$((n+1)); ( timeout "$DNS_TIMEOUT" nslookup "$DNS_NAME" "$h" >/dev/null 2>&1 && : > "$PD/u6.$n" ) & pids="$pids $!"; done
+	fi
+	if [ -n "$d4$d6" ]; then ( timeout "$DNS_TIMEOUT" nslookup "$DNS_NAME" >/dev/null 2>&1 && : > "$PD/sys.1" ) & pids="$pids $!"; fi
+	waitall $pids
+	if [ -n "$d4" ]; then
+		s4=down; any p4 && { s4=ok; pk4=1; }
+		if [ -n "$DNS_UPSTREAM4" ]; then
+			if any u4; then u=1; s4=ok; else u=0; fi
+			{ [ "$DNS_STRICT" = 1 ] || [ $pk4 = 0 ]; } && up4=$u
+		fi
+	fi
+	if [ -n "$d6" ]; then
+		s6=down; any p6 && { s6=ok; pk6=1; }
+		if [ -n "$DNS_UPSTREAM6" ]; then
+			if any u6; then u=1; s6=ok; else u=0; fi
+			{ [ "$DNS_STRICT" = 1 ] || [ $pk6 = 0 ]; } && up6=$u
+		fi
+	fi
+		if [ "$s4" = ok ] || [ "$s6" = ok ]; then
+		any sys && dsys=ok || dsys=fail
+		if [ "$up4" = 1 ] || [ "$up6" = 1 ]; then dup=1
+		elif [ "$up4" = 0 ] || [ "$up6" = 0 ]; then dup=0; fi
+		rm -rf "$PD"
+		if [ "$dsys" != ok ] || [ "$dup" = 0 ]; then sc=6; return; fi
+		case "$s4/$s6" in
+			ok/ok) sc=1 ;; ok/none) sc=2 ;; none/ok) sc=3 ;; ok/down) sc=4 ;; down/ok) sc=5 ;;
+		esac
+	elif [ "$s4" = down ] || [ "$s6" = down ]; then rm -rf "$PD"; sc=7
+	else rm -rf "$PD"; sc=8; fi
+}
+sc_name() { case "$1" in 1) echo full ;; 2) echo ipv4-only ;; 3) echo ipv6-only ;; 4) echo ipv6-broken ;; 5) echo ipv4-broken ;; 6) echo dns-failure ;; 7) echo no-answer ;; 8) echo no-uplink ;; esac; }
+okfail() { case "$1" in 1) echo ok ;; 0) echo fail ;; *) echo - ;; esac; }
+write_state() {		# JSON on stdout
+	printf '{"scenario":%s,"name":"%s","ipv4":{"state":"%s","dev":"%s","dns_upstream":"%s"},"ipv6":{"state":"%s","dev":"%s","dns_upstream":"%s"},"dns":{"system":"%s","upstream":"%s"},"time":%s}\n' \
+		"$sc" "$(sc_name "$sc")" "$s4" "$d4" "$(okfail "$up4")" "$s6" "$d6" "$(okfail "$up6")" "$dsys" "$(okfail "$dup")" "$(date +%s)"
+}
+[ "$ONCE" = 1 ] && { observe; write_state; exit 0; }
+
+# ---- the LED ----------------------------------------------------------------
+snapshot() { [ -d "$1" ] || return 0; printf '%s %s' "$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$1/trigger")" "$(cat "$1/brightness")"; }
+restore_one() {
+	local d="$1" t="${2%% *}" b="${2##* }"
+	[ -d "$d" ] && [ -n "$t" ] || return 0
+	echo none > "$d/trigger" 2>/dev/null
+	echo "$b" > "$d/brightness" 2>/dev/null
+	[ "$t" = none ] || echo "$t" > "$d/trigger" 2>/dev/null
+}
+# Deleting a "status breathing" entry in the system LED configuration does not stop the pattern
+# that is already running: the led init script only sets up the entries that exist. So a status
+# channel that still runs a pattern without an entry is switched off here; when no entry of
+# the system LED configuration mentions blue any more, blue goes back to steady on (the
+# device default). While this program holds the LEDs, only the saved state is corrected.
+has_entry() {	# $1 = sysfs name, $2 = trigger: is there such an entry in the system LED config?
+	local s
+	for s in $($UCI -q show system 2>/dev/null | sed -n "s/^system\.\([^.]*\)\.sysfs='$1'\$/\1/p"); do
+		[ -z "$2" ] || [ "$($UCI -q get "system.$s.trigger" 2>/dev/null)" = "$2" ] && return 0
+	done
+	return 1
+}
+orphan() {	# $1 = LED directory, $2 = R|G|B
+	local d="$1" n="${1##*/}" v=0
+	[ -d "$d" ] || return 0
+	[ "$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$d/trigger" 2>/dev/null)" = pattern ] || return 0
+	has_entry "$n" pattern && return 0
+	if [ "$2" = B ] && ! has_entry "$n" ""; then v="$(cat "$d/max_brightness" 2>/dev/null)"; [ -n "$v" ] || v=255; fi
+	if [ "$overridden" = 1 ]; then
+		eval "SNAP_$2=\"none $v\""
+	else
+		echo none > "$d/trigger" 2>/dev/null; echo "$v" > "$d/brightness" 2>/dev/null
+	fi
+	echo "$(date +%T) $n: the pattern has no entry any more, reset"
+}
+reset_orphans() { orphan "$LED_R" R; orphan "$LED_G" G; orphan "$LED_B" B; }
+
+overridden=0
+restore() {
+	flash_stop
+	[ "$overridden" = 1 ] || return 0
+	restore_one "$LED_R" "$SNAP_R"; restore_one "$LED_G" "$SNAP_G"; restore_one "$LED_B" "$SNAP_B"
+	[ -x /etc/init.d/led ] && /etc/init.d/led restart >/dev/null 2>&1   # re-apply the system LED config
+	overridden=0
+	reset_orphans
+}
+scale() { local m v; m="$(cat "$1/max_brightness" 2>/dev/null)"; [ -n "$m" ] || m=255; v=$(($2 * m / 255)); [ "$2" -le 0 ] || { [ "$v" -ge 1 ] || v=1; }; echo "$v"; }
+chan() { local d="$1"; [ -d "$d" ] || return 0; echo none > "$d/trigger" 2>/dev/null; echo "$(scale "$d" "$2")" > "$d/brightness"; }
+
+# half period of a flash, seconds; needs a sub-second delay: sleep with decimals, else
+# timeout with decimals (busybox without FANCY_SLEEP), else whole seconds
+if sleep 0.01 2>/dev/null; then nap() { sleep "$1"; }; HALF_DEF=0.25
+elif [ "$(timeout 0.01 sleep 100 >/dev/null 2>&1; echo $?)" = 124 ]; then
+	nap() { timeout "$1" sleep 1000 >/dev/null 2>&1; }; HALF_DEF=0.25
+else nap() { sleep 1; }; HALF_DEF=1; fi
+HALF=${FLASH_HALF:-$HALF_DEF}
+# flashing is done here, not with one kernel timer per LED: those start at slightly
+# different moments and the colours flash out of step
+FLASHPID=""
+flash_stop() { [ -z "$FLASHPID" ] || kill "$FLASHPID" 2>/dev/null; FLASHPID=""; }
+flash() {	# r g b levels [half-period]: all channels on together, off together
+	local vr vg vb hp="${4:-$HALF}"
+	chan "$LED_R" 0; chan "$LED_G" 0; chan "$LED_B" 0
+	vr=$(scale "${LED_R:-/x}" "$1"); vg=$(scale "${LED_G:-/x}" "$2"); vb=$(scale "${LED_B:-/x}" "$3")
+	(
+		while :; do
+			[ -d "$LED_R" ] && echo "$vr" > "$LED_R/brightness"
+			[ -d "$LED_G" ] && echo "$vg" > "$LED_G/brightness"
+			[ -d "$LED_B" ] && echo "$vb" > "$LED_B/brightness"
+			nap "$hp"
+			[ -d "$LED_R" ] && echo 0 > "$LED_R/brightness"
+			[ -d "$LED_G" ] && echo 0 > "$LED_G/brightness"
+			[ -d "$LED_B" ] && echo 0 > "$LED_B/brightness"
+			nap "$hp"
+		done
+	) &
+	FLASHPID=$!
+}
+# switch off the channels that are not needed first, then light the others (no mixed colours)
+paint() {	# r g b mode [half]
+	flash_stop; overridden=1
+	if [ "$4" = flashing ]; then flash "$1" "$2" "$3" "$5"; return; fi
+	[ "$1" -gt 0 ] || chan "$LED_R" 0; [ "$2" -gt 0 ] || chan "$LED_G" 0; [ "$3" -gt 0 ] || chan "$LED_B" 0
+	[ "$1" -le 0 ] || chan "$LED_R" "$1"; [ "$2" -le 0 ] || chan "$LED_G" "$2"; [ "$3" -le 0 ] || chan "$LED_B" "$3"
+}
+show() {
+	local spec
+	case "$1" in 1) spec=$STATE_1 ;; 2) spec=$STATE_2 ;; 3) spec=$STATE_3 ;; 4) spec=$STATE_4 ;;
+		5) spec=$STATE_5 ;; 6) spec=$STATE_6 ;; 7) spec=$STATE_7 ;; *) spec=$STATE_8 ;; esac
+	if [ "$spec" = system ]; then restore; else set -- "$1" $spec; paint "$2" "$3" "$4" "$5" "$6"; set -- "$1"; fi
+	cur="$1"
+	logger -t status-light "scenario $1 $(sc_name "$1") (v4=$s4 v6=$s6 dns=$dsys upstream=$(okfail "$dup"))" 2>/dev/null
+	echo "$(date +%T) scenario $1 $(sc_name "$1")  (v4=$s4 v6=$s6 dns=$dsys upstream=$(okfail "$dup"))"
+}
+
+[ -n "$LED_R$LED_G$LED_B" ] || { echo "no RGB status LED found in $LEDS" >&2; exit 1; }
+echo "LEDs: R=${LED_R##*/} G=${LED_G##*/} B=${LED_B##*/}   flashing half-period: ${HALF}s"
+reset_orphans
+SNAP_R="$(snapshot "$LED_R")"; SNAP_G="$(snapshot "$LED_G")"; SNAP_B="$(snapshot "$LED_B")"
+echo "saved: R=[$SNAP_R] G=[$SNAP_G] B=[$SNAP_B]"
+
+# ---- wake up at once when an interface goes up/down (or a default route changes) -----
+MAIN=$$; wake=0; reload=0; FIFO=/tmp/status-light.$MAIN.fifo; PIDS=""
+trap 'wake=1' USR1
+trap 'reload=1; wake=1' HUP
+start_monitor() {
+	[ -n "$MONITOR" ] && [ "$MONITOR" != none ] || return
+	rm -f "$FIFO"; mkfifo "$FIFO" 2>/dev/null || return
+	for m in $MONITOR; do
+		case "$m" in
+			ubus)  ubus listen network.interface > "$FIFO" 2>/dev/null & PIDS="$PIDS $!" ;;
+			route) ip monitor route > "$FIFO" 2>/dev/null & PIDS="$PIDS $!" ;;
+		esac
+	done
+	[ -n "$PIDS" ] || { rm -f "$FIFO"; return; }
+	( while read -r l; do case "$l" in "{"*|*default*) kill -USR1 "$MAIN" 2>/dev/null ;; esac; done < "$FIFO" ) & PIDS="$PIDS $!"
+}
+stop_monitor() { [ -z "$PIDS" ] || kill $PIDS 2>/dev/null; rm -f "$FIFO"; }
+PIDFILE=${PIDFILE:-/var/run/status-light.pid}
+echo $$ > "$PIDFILE"
+trap 'stop_monitor; restore; rm -rf "$PD" "$STATE_FILE" "$STATE_FILE.tmp" "$PIDFILE"; exit 0' INT TERM
+start_monitor
+# SIGHUP (sent by 'reload' in /etc/init.d/status-light when the settings change): read them again
+cur=""; cnt=0
+while :; do
+	if [ "$reload" = 1 ]; then
+		reload=0; load_config; reset_orphans; cur=""; cnt=0
+		echo "$(date +%T) settings reloaded"
+	fi
+	observe
+	write_state > "$STATE_FILE.tmp" 2>/dev/null && mv "$STATE_FILE.tmp" "$STATE_FILE"
+	if [ -z "$cur" ] || [ "$sc" -le "$cur" ]; then
+		cnt=0; [ "$sc" = "$cur" ] || show "$sc"                  # same or better: at once
+	else
+		cnt=$((cnt + 1))
+		[ "$cnt" -ge "$FAILS" ] && { cnt=0; show "$sc"; }         # worse: only after FAILS in a row
+	fi
+	if [ "$cnt" -gt 0 ]; then iv=$INT_FAST; elif [ "${cur:-1}" -le 3 ]; then iv=$INT_OK; else iv=$INT_BAD; fi
+	if [ "$wake" = 1 ]; then wake=0; sleep 1
+	else
+		sleep "$iv" & SP=$!; wait $SP; kill $SP 2>/dev/null
+		[ "$wake" = 1 ] && { wake=0; sleep 1; }
+	fi
+done
