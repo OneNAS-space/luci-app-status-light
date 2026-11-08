@@ -181,6 +181,25 @@ orphan() {	# $1 = LED directory, $2 = R|G|B
 }
 reset_orphans() { orphan "$LED_R" R; orphan "$LED_G" G; orphan "$LED_B" B; }
 
+# The led init script is not run when the system LED configuration changes, so new or changed
+# entries for the status LEDs (the breathing light) would only show after the next boot. When
+# they changed, run it again. While this program holds the LEDs the entries are applied when it
+# gives them back (restore runs the led script).
+entries_sig() {
+	local s
+	for s in $($UCI -q show system 2>/dev/null | sed -n "s/^system\.\([^.]*\)\.sysfs='\(red\|green\|blue\):status'$/\1/p"); do
+		$UCI -q show "system.$s"
+	done | md5sum
+}
+sync_entries() {
+	local sig="$(entries_sig)"
+	[ "$sig" = "$ENTRIES_SIG" ] && return 0
+	ENTRIES_SIG="$sig"
+	[ "$overridden" = 1 ] && return 0
+	[ -x /etc/init.d/led ] && /etc/init.d/led restart >/dev/null 2>&1
+	echo "$(date +%T) the status LED entries changed, led script run again"
+}
+
 overridden=0
 restore() {
 	flash_stop
@@ -241,6 +260,7 @@ show() {
 
 [ -n "$LED_R$LED_G$LED_B" ] || { echo "no RGB status LED found in $LEDS" >&2; exit 1; }
 echo "LEDs: R=${LED_R##*/} G=${LED_G##*/} B=${LED_B##*/}   flashing half-period: ${HALF}s"
+ENTRIES_SIG="$(entries_sig)"
 reset_orphans
 SNAP_R="$(snapshot "$LED_R")"; SNAP_G="$(snapshot "$LED_G")"; SNAP_B="$(snapshot "$LED_B")"
 echo "saved: R=[$SNAP_R] G=[$SNAP_G] B=[$SNAP_B]"
@@ -270,7 +290,7 @@ start_monitor
 cur=""; cnt=0
 while :; do
 	if [ "$reload" = 1 ]; then
-		reload=0; load_config; reset_orphans; cur=""; cnt=0
+		reload=0; load_config; sync_entries; reset_orphans; cur=""; cnt=0
 		echo "$(date +%T) settings reloaded"
 	fi
 	observe
