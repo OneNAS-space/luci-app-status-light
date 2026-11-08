@@ -24,8 +24,7 @@ The state is written to `/tmp/status-light.json`, the settings are in `/etc/conf
   (`/usr/libexec/led-trigger/pattern`, `/usr/libexec/led-pattern-sync`), see sync-bot patch 0008
 - `ip-full` (installed with the package)
 
-## Picture of the device (optional)
+## Picture of the device
 
-The Current state and Breathing light tabs can show a picture of the device with the light
-laid over it. The picture is not part of the package: put your own file at
-`/www/luci-static/resources/status-light/device.png` (or `device.svg`).
+The Current state and Breathing light tabs show a picture of the device with the light laid
+over it (`device.png`, drawn for this package). Without the picture an icon is shown.

@@ -352,8 +352,7 @@ function scenarioLook(n, c, sys) {
  * plain icon is used. The light is painted and animated like the real LED. */
 var deviceImages = [
 	/* device.png has the slit already blacked out, so no cover patch is needed */
-	{ file: 'status-light/device.png', ratio: 0.2336, led: { left: 38.64, width: 22.71, top: 53.46, height: 5.12 }, round: '4% 4% 0 0 / 80% 80% 0 0' },
-	{ file: 'status-light/device.svg', ratio: 0.2287, led: { left: 38.83, width: 22.08, top: 54.67, height: 5.1 }, round: '4% 4% 0 0 / 80% 80% 0 0', patch: '3% / 40%' }
+	{ file: 'status-light/device.png', ratio: 0.2695, led: { left: 38.7, width: 22.7, top: 51.9, height: 4.8 }, round: '4% 4% 0 0 / 80% 80% 0 0' }
 ];
 
 function deviceDrawing(width) {

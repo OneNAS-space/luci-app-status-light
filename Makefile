@@ -57,6 +57,7 @@ define Package/luci-app-status-light/install
 
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/status-light
 	$(INSTALL_DATA) ./files/www/luci-static/resources/status-light/common.js $(1)/www/luci-static/resources/status-light/common.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/status-light/device.png $(1)/www/luci-static/resources/status-light/device.png
 
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/status-light
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/status-light/config.js $(1)/www/luci-static/resources/view/status-light/config.js
