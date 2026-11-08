@@ -74,7 +74,7 @@ if [ -z "$${IPKG_INSTROOT}" ]; then
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	# the new ACL file is only read after rpcd is told to (web sessions are reset once)
-	killall -HUP rpcd 2>/dev/null
+	( sleep 3; killall -HUP rpcd ) >/dev/null 2>&1 </dev/null &
 fi
 exit 0
 endef
