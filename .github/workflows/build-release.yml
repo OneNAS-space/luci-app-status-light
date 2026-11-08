@@ -70,7 +70,7 @@ jobs:
     needs: check
     if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # timeout-minutes: 30
     
     strategy:
       fail-fast: false
