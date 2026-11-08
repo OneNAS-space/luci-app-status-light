@@ -17,6 +17,21 @@ settings; scenario 1 can also be Easing (breathing)); the page has four tabs:
 
 The state is written to `/tmp/status-light.json`, the settings are in `/etc/config/status_light`.
 
+## Screenshots
+
+The page in the Argon theme. The breathing light is easier to judge on the router than in a
+picture; the preview on the page is only an approximation of the real LED.
+
+![Breathing light](screenshot/Screen.gif)
+
+| Current state | Scenario lights |
+| --- | --- |
+| ![Current state](screenshot/status-light.png) | ![Scenario lights](screenshot/scenario-lights.png) |
+
+![Breathing light tab](screenshot/breathing-light.png)
+
+![The breathing entries written into the LED Configuration tab](screenshot/led-config.png)
+
 ## Needs in the firmware
 
 - `kmod-ledtrig-pattern` (the pattern LED trigger)
