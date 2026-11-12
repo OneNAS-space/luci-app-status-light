@@ -1,3 +1,6 @@
+# probe 'auto': the DNS servers the WAN got (netifd) are pinged and asked, so the checks work in
+# any country. The lists below are used for a family the WAN has no DNS server for (fallback),
+# and for probe 'custom' (only the lists).
 config status_light 'main'
 	option enabled '1'
 	option interval_ok '30'
@@ -5,17 +8,19 @@ config status_light 'main'
 	option interval_fast '2'
 	option fails '2'
 	option monitor 'ubus'
-	option dns_name 'www.baidu.com'
+	option probe 'auto'
+	option dns_name 'openwrt.org'
 	option dns_strict '1'
 	option dns_timeout '3'
 	option ping_timeout '2'
-	list hosts4 '223.5.5.5'
-	list hosts4 '119.29.29.29'
-	list hosts6 '2400:3200::1'
-	list dns_upstream4 '223.5.5.5'
-	list dns_upstream4 '119.29.29.29'
-	list dns_upstream6 '2400:3200::1'
-	list dns_upstream6 '2402:4e00::'
+	list hosts4 '1.1.1.1'
+	list hosts4 '8.8.8.8'
+	list hosts6 '2606:4700:4700::1111'
+	list hosts6 '2001:4860:4860::8888'
+	list dns_upstream4 '1.1.1.1'
+	list dns_upstream4 '8.8.8.8'
+	list dns_upstream6 '2606:4700:4700::1111'
+	list dns_upstream6 '2001:4860:4860::8888'
 
 # What each scenario looks like: mode 'solid', 'flashing' (half = seconds on / off,
 # default 0.25), 'system' (hand the LED back to the system LED configuration)
