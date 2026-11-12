@@ -592,7 +592,7 @@ function breathingBlock(c, sys) {
     root = E('div', { 'class': 'cbi-section', 'id': 'status-light-breath' }, [
         style,
         E('h3', _('Breathing light (scenario 1)')),
-        E('div', { 'class': 'cbi-section-descr' }, _('Used when scenario 1 is set to Breathing. The matching "status breathing" entries are written into the LED Configuration tab when you save; switching scenario 1 back to "Follow system settings" leaves them in place. Pick a colour as you would on a screen: the red, green and blue channels are scaled by the calibration below, so white looks white. The preview is only an approximation of the real LED.')),
+        E('div', { 'class': 'cbi-section-descr' }, _('Used when scenario 1 is set to Easing (breathing). The matching "status breathing" entries are written into the LED Configuration tab when you save; switching scenario 1 back to "Follow system settings" leaves them in place. Pick a colour as you would on a screen: the red, green and blue channels are scaled by the calibration below, so white looks white. The preview is only an approximation of the real LED.')),
         E('div', { 'class': 'cbi-value' }, [
             E('label', { 'class': 'cbi-value-title' }, _('Breathing light')),
             E('div', { 'class': 'cbi-value-field' }, mode)
