@@ -5,7 +5,7 @@ include $(TOPDIR)/rules.mk
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_MAINTAINER:=Jackie Han <jackie.han@gmail.com>
 PKG_NAME:=luci-app-status-light
-PKG_VERSION:=1.0.4
+PKG_VERSION:=1.0.3
 PKG_RELEASE:=1
 
 PKG_BUILD_DIR := $(BUILD_DIR)/$(PKG_NAME)
@@ -17,7 +17,7 @@ define Package/luci-app-status-light
 	CATEGORY:=LuCI
 	SUBMENU:=3. Applications
 	TITLE:=Internet status on the RGB status LED, with a LuCI page
-	DEPENDS:=+luci-base +ip-full
+	DEPENDS:=+luci-base +ip-full +kmod-ledtrig-pattern
 	PKGARCH:=all
 endef
 
@@ -25,7 +25,8 @@ define Package/luci-app-status-light/description
  Shows the state of the internet connection (IPv4, IPv6, DNS) on the RGB status LED
  of the Askey/Spectrum SBE1V1K. The Status Light tab in System > LED Configuration
  sets the look of the eight cases, the checks and an optional breathing light.
- Needs the pattern LED trigger and its hook in the firmware.
+ Needs the pattern LED trigger (kmod-ledtrig-pattern) and, for the breathing light,
+ the pattern hook for /etc/init.d/led in the firmware.
 endef
 
 define Package/luci-app-status-light/conffiles
@@ -62,13 +63,21 @@ define Package/luci-app-status-light/install
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/status-light
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/status-light/config.js $(1)/www/luci-static/resources/view/status-light/config.js
 
-	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/system/led-trigger
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/system/led-trigger/pattern.js $(1)/www/luci-static/resources/view/system/led-trigger/pattern.js
+	# Not installed into view/system/led-trigger directly: that directory belongs to LuCI, and
+	# a file there would conflict if LuCI ever ships its own pattern.js. The uci-defaults script
+	# copies it there only when it is missing (see postinst).
+	$(INSTALL_DIR) $(1)/usr/share/status-light
+	$(INSTALL_DATA) ./files/usr/share/status-light/pattern.js $(1)/usr/share/status-light/pattern.js
+
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_BIN) ./files/etc/uci-defaults/92-status-light-pattern-view $(1)/etc/uci-defaults/92-status-light-pattern-view
 endef
 
 define Package/luci-app-status-light/postinst
 #!/bin/sh
 if [ -z "$${IPKG_INSTROOT}" ]; then
+	# in a firmware image the same script runs at the first boot
+	[ -f /etc/uci-defaults/92-status-light-pattern-view ] && ( . /etc/uci-defaults/92-status-light-pattern-view ) && rm -f /etc/uci-defaults/92-status-light-pattern-view
 	/etc/init.d/status-light enable
 	/etc/init.d/status-light restart
 	rm -f /tmp/luci-indexcache.*
@@ -84,6 +93,9 @@ define Package/luci-app-status-light/prerm
 if [ -z "$${IPKG_INSTROOT}" ]; then
 	/etc/init.d/status-light stop
 	/etc/init.d/status-light disable
+	# remove the trigger form only if it is still the one this package put there
+	d=/www/luci-static/resources/view/system/led-trigger/pattern.js
+	cmp -s /usr/share/status-light/pattern.js "$$d" && rm -f "$$d"
 fi
 exit 0
 endef
