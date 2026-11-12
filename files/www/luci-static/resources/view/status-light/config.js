@@ -16,7 +16,7 @@ return view.extend({
 	render: function(data) {
 		var state = data[0], m, s, o, ledRow = nc.ledNowRow(), breathTab = null;
 
-		/* the Breathing light tab is there when scenario 1 is set to Breathing or when breathing
+		/* the Breathing light tab is there when scenario 1 is set to Easing or when breathing
 		 * entries are in the system LED configuration; mode is the value being edited, if any */
 		var wantBreathingTab = function(mode) {
 			return (mode || uci.get('status_light', 's1', 'mode') || 'system') == 'easing' || nc.hasBreathing();
@@ -153,17 +153,23 @@ return view.extend({
 		o.datatype = 'range(1,10)';
 		o.placeholder = '2';
 
+		o = s.option(form.ListValue, 'probe', _('Servers to check'),
+			_('Automatic pings and asks the DNS servers that the WAN interface received, so it works in any country. The lists below are then used only for an address family for which the WAN has no DNS server. Custom uses the lists below only.'));
+		o.value('auto', _('Automatic (the DNS servers of the WAN)'));
+		o.value('custom', _('Custom (the lists below)'));
+		o.default = 'auto';
+
 		o = s.option(form.DynamicList, 'hosts4', _('IPv4 hosts to ping'));
 		o.datatype = 'ip4addr("nomask")';
-		o.placeholder = '223.5.5.5';
+		o.placeholder = '1.1.1.1';
 
 		o = s.option(form.DynamicList, 'hosts6', _('IPv6 hosts to ping'));
 		o.datatype = 'ip6addr("nomask")';
-		o.placeholder = '2400:3200::1';
+		o.placeholder = '2606:4700:4700::1111';
 
 		o = s.option(form.Value, 'dns_name', _('Name to resolve'));
 		o.datatype = 'hostname';
-		o.placeholder = 'www.baidu.com';
+		o.placeholder = 'openwrt.org';
 
 		o = s.option(form.Flag, 'dns_strict', _('Also ask the upstream DNS servers directly'),
 			_('Catches a resolver that still answers from its cache while the uplink is dead.'));
@@ -171,11 +177,11 @@ return view.extend({
 
 		o = s.option(form.DynamicList, 'dns_upstream4', _('IPv4 upstream DNS servers'));
 		o.datatype = 'ip4addr("nomask")';
-		o.placeholder = '223.5.5.5';
+		o.placeholder = '1.1.1.1';
 
 		o = s.option(form.DynamicList, 'dns_upstream6', _('IPv6 upstream DNS servers'));
 		o.datatype = 'ip6addr("nomask")';
-		o.placeholder = '2400:3200::1';
+		o.placeholder = '2606:4700:4700::1111';
 
 		/* tab 4: breathing light, only shown when scenario 1 breathes or breathing entries exist */
 		s = m.section(form.NamedSection, 'main', 'status_light');
