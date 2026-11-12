@@ -1,1 +1,8 @@
-
+#!/bin/sh
+# LuCI's LED configuration page lists the files in view/system/led-trigger as trigger forms; the
+# file name is the kernel trigger name. LuCI has no form for the "pattern" trigger (yet), so the
+# one of this package is copied there, but only when none is there: this package must not own a
+# file that LuCI may ship itself.
+d=/www/luci-static/resources/view/system/led-trigger
+[ -e "$d/pattern.js" ] || { mkdir -p "$d" && cp /usr/share/status-light/pattern.js "$d/pattern.js"; }
+exit 0
