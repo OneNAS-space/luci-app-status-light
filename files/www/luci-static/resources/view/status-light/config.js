@@ -154,7 +154,7 @@ return view.extend({
 		o.placeholder = '2';
 
 		o = s.option(form.ListValue, 'probe', _('Servers to check'),
-			_('Automatic pings and asks the DNS servers that the WAN interface received, so it works in any country. The lists below are then used only for an address family for which the WAN has no DNS server. Custom uses the lists below only.'));
+			_('Automatic asks the DNS servers that the WAN interface received, so it works in any country, and pings them when they are public addresses. A private address (a modem or an upstream router) is only asked: it answers whenever the link is up. The lists below are used for an address family for which the WAN has no DNS server, and as ping targets when all of its DNS servers are private. Custom uses the lists below only.'));
 		o.value('auto', _('Automatic (the DNS servers of the WAN)'));
 		o.value('custom', _('Custom (the lists below)'));
 		o.default = 'auto';
