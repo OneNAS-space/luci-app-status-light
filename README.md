@@ -36,10 +36,12 @@ picture; the preview on the page is only an approximation of the real LED.
 
 IPv4 and IPv6 are probed on their own, together with the router's own DNS resolver. By default
 (Servers to check: Automatic) the targets are the DNS servers the WAN interface received
-(DHCP, RA or PPP), pinged and asked directly, so it works in any country. For an address
-family the WAN has no DNS server for, and with Servers to check set to Custom, the lists on the
-Detection tab are used; they ship with public servers (1.1.1.1, 8.8.8.8 and their IPv6
-addresses) and can be replaced with servers close to you.
+(DHCP, RA or PPP): they are asked directly, and also pinged when they are public addresses. A
+private address (a modem or an upstream router) is only asked, because it answers a ping whenever
+the link is up, which proves nothing about the Internet. For an address family the WAN has no DNS
+server for, as ping targets when all of the WAN's servers are private, and with Servers to check
+set to Custom, the lists on the Detection tab are used; they ship with public servers (1.1.1.1,
+8.8.8.8 and their IPv6 addresses) and can be replaced with servers close to you.
 
 ## Other programs and devices
 
