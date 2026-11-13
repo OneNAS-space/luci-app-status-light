@@ -1,6 +1,7 @@
-# probe 'auto': the DNS servers the WAN got (netifd) are pinged and asked, so the checks work in
-# any country. The lists below are used for a family the WAN has no DNS server for (fallback),
-# and for probe 'custom' (only the lists).
+# probe 'auto': the DNS servers the WAN got (netifd) are asked, and pinged when they are public
+# addresses, so the checks work in any country. The lists below are used for a family the WAN has
+# no DNS server for, as ping targets when all of them are private, and for probe 'custom'
+# (only the lists).
 config status_light 'main'
 	option enabled '1'
 	option interval_ok '30'
