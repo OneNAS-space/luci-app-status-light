@@ -8,8 +8,9 @@
 # DNS: the router's own resolver must answer; with dns_strict=1 an upstream server must
 # answer a direct query too (that one bypasses the resolver cache).
 # Targets: with probe=auto (default) the DNS servers that netifd learned for the uplink are
-# pinged and asked, so it works in any country. A family for which the WAN has no DNS server,
-# and probe=custom, use the lists of /etc/config/status_light.
+# asked (and pinged when they are public addresses), so it works in any country. A family for
+# which the WAN has no DNS server, ping targets when all of them are private, and probe=custom
+# use the lists of /etc/config/status_light.
 #
 #   #  IPv4  IPv6  DNS    meaning
 #   1  ok    ok    ok     all fine                 (default: the system LED config shows it)
@@ -113,15 +114,32 @@ wan_dns() {
 	done | awk '!seen[$0]++' | tr '\n' ' '
 }
 
+# The addresses among the arguments that can be on the Internet. A private, CGNAT or loopback
+# address (a modem or an upstream router) answers whenever the link is up, so a ping to it proves
+# nothing about the Internet; such servers are asked a DNS question, but not pinged.
+public_only() {
+	local a
+	for a in "$@"; do
+		case "$a" in
+			10.*|192.168.*|127.*|169.254.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) continue ;;
+			100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) continue ;;
+			[fF][cCdD]*:*|[fF][eE]80:*|::1) continue ;;
+		esac
+		echo "$a"
+	done | tr '\n' ' '
+}
+
 # sets d4 d6 s4 s6 up4 up6 dsys dup sc   (up*/dup: 1|0|- ; dsys: ok|fail|-)
 observe() {
-	local pids="" h n u pk4=0 pk6=0 a ph4 pu4 ph6 pu6
+	local pids="" h n u pk4=0 pk6=0 a b ph4 pu4 ph6 pu6
 	d4="$(default_dev -4)"; d6="$(default_dev -6)"
 	s4=none; s6=none; up4=-; up6=-; dsys=-; dup=-
 	ph4="$HOSTS4"; pu4="$DNS_UPSTREAM4"; ph6="$HOSTS6"; pu6="$DNS_UPSTREAM6"
 	if [ "$PROBE" != custom ]; then
-		a="$(wan_dns "$d4" 4)"; [ -z "$a" ] || { ph4="$a"; pu4="$a"; }
-		a="$(wan_dns "$d6" 6)"; [ -z "$a" ] || { ph6="$a"; pu6="$a"; }
+		a="$(wan_dns "$d4" 4)"
+		[ -z "$a" ] || { pu4="$a"; b="$(public_only $a)"; [ -z "$b" ] || ph4="$b"; }
+		a="$(wan_dns "$d6" 6)"
+		[ -z "$a" ] || { pu6="$a"; b="$(public_only $a)"; [ -z "$b" ] || ph6="$b"; }
 	fi
 	rm -rf "$PD"; mkdir -p "$PD"
 	if [ -n "$d4" ]; then
