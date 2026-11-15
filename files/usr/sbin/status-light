@@ -7,10 +7,12 @@
 #   down  a default route, but nothing answers
 # DNS: the router's own resolver must answer; with dns_strict=1 an upstream server must
 # answer a direct query too (that one bypasses the resolver cache).
-# Targets: with probe=auto (default) the DNS servers that netifd learned for the uplink are
-# asked (and pinged when they are public addresses), so it works in any country. A family for
-# which the WAN has no DNS server, ping targets when all of them are private, and probe=custom
-# use the lists of /etc/config/status_light.
+# Targets: with probe=auto (default) the public DNS servers that netifd learned for the uplink
+# are pinged and asked, so it works in any country. A private address (a modem, an upstream
+# router) is never used: it answers whenever the link is up. A family for which the WAN has no
+# public DNS server, and probe=custom, use the lists of /etc/config/status_light. The state file
+# says which one each family uses ("probe": wan | list); the LuCI page shows only the lists
+# that are in use.
 #
 #   #  IPv4  IPv6  DNS    meaning
 #   1  ok    ok    ok     all fine                 (default: the system LED config shows it)
@@ -131,15 +133,15 @@ public_only() {
 
 # sets d4 d6 s4 s6 up4 up6 dsys dup sc   (up*/dup: 1|0|- ; dsys: ok|fail|-)
 observe() {
-	local pids="" h n u pk4=0 pk6=0 a b ph4 pu4 ph6 pu6
+	local pids="" h n u pk4=0 pk6=0 a ph4 pu4 ph6 pu6
 	d4="$(default_dev -4)"; d6="$(default_dev -6)"
 	s4=none; s6=none; up4=-; up6=-; dsys=-; dup=-
-	ph4="$HOSTS4"; pu4="$DNS_UPSTREAM4"; ph6="$HOSTS6"; pu6="$DNS_UPSTREAM6"
+	ph4="$HOSTS4"; pu4="$DNS_UPSTREAM4"; ph6="$HOSTS6"; pu6="$DNS_UPSTREAM6"; PS4=list; PS6=list
 	if [ "$PROBE" != custom ]; then
-		a="$(wan_dns "$d4" 4)"
-		[ -z "$a" ] || { pu4="$a"; b="$(public_only $a)"; [ -z "$b" ] || ph4="$b"; }
-		a="$(wan_dns "$d6" 6)"
-		[ -z "$a" ] || { pu6="$a"; b="$(public_only $a)"; [ -z "$b" ] || ph6="$b"; }
+		a="$(public_only $(wan_dns "$d4" 4))"
+		[ -z "$a" ] || { ph4="$a"; pu4="$a"; PS4=wan; }
+		a="$(public_only $(wan_dns "$d6" 6))"
+		[ -z "$a" ] || { ph6="$a"; pu6="$a"; PS6=wan; }
 	fi
 	rm -rf "$PD"; mkdir -p "$PD"
 	if [ -n "$d4" ]; then
@@ -181,8 +183,8 @@ observe() {
 sc_name() { case "$1" in 1) echo full ;; 2) echo ipv4-only ;; 3) echo ipv6-only ;; 4) echo ipv6-broken ;; 5) echo ipv4-broken ;; 6) echo dns-failure ;; 7) echo no-answer ;; 8) echo no-uplink ;; esac; }
 okfail() { case "$1" in 1) echo ok ;; 0) echo fail ;; *) echo - ;; esac; }
 write_state() {		# JSON on stdout
-	printf '{"scenario":%s,"name":"%s","ipv4":{"state":"%s","dev":"%s","dns_upstream":"%s"},"ipv6":{"state":"%s","dev":"%s","dns_upstream":"%s"},"dns":{"system":"%s","upstream":"%s"},"time":%s}\n' \
-		"$sc" "$(sc_name "$sc")" "$s4" "$d4" "$(okfail "$up4")" "$s6" "$d6" "$(okfail "$up6")" "$dsys" "$(okfail "$dup")" "$(date +%s)"
+	printf '{"scenario":%s,"name":"%s","ipv4":{"state":"%s","dev":"%s","probe":"%s","dns_upstream":"%s"},"ipv6":{"state":"%s","dev":"%s","probe":"%s","dns_upstream":"%s"},"dns":{"system":"%s","upstream":"%s"},"time":%s}\n' \
+		"$sc" "$(sc_name "$sc")" "$s4" "$d4" "$PS4" "$(okfail "$up4")" "$s6" "$d6" "$PS6" "$(okfail "$up6")" "$dsys" "$(okfail "$dup")" "$(date +%s)"
 }
 [ "$ONCE" = 1 ] && { observe; write_state; exit 0; }
 
