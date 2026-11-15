@@ -16,6 +16,16 @@ return view.extend({
 	render: function(data) {
 		var state = data[0], m, s, o, ledRow = nc.ledNowRow(), breathTab = null;
 
+		/* in Automatic only the address families that do not get a public DNS server from the WAN
+		 * need their own lists; the daemon says which ones in the state file. Without that
+		 * information every list is shown. A hidden list keeps its values (retain). */
+		var needsList = function(o, family) {
+			o.retain = true;
+
+			if (state && state[family] && state[family].probe == 'wan')
+				o.depends('probe', 'custom');
+		};
+
 		/* the Breathing light tab is there when scenario 1 is set to Easing or when breathing
 		 * entries are in the system LED configuration; mode is the value being edited, if any */
 		var wantBreathingTab = function(mode) {
@@ -154,18 +164,20 @@ return view.extend({
 		o.placeholder = '2';
 
 		o = s.option(form.ListValue, 'probe', _('Servers to check'),
-			_('Automatic asks the DNS servers that the WAN interface received, so it works in any country, and pings them when they are public addresses. A private address (a modem or an upstream router) is only asked: it answers whenever the link is up. The lists below are used for an address family for which the WAN has no DNS server, and as ping targets when all of its DNS servers are private. Custom uses the lists below only.'));
+			_('Automatic pings and asks the public DNS servers that the WAN interface received, so it works in any country. A private address (a modem or an upstream router) is never used: it answers whenever the link is up. For an address family without a public WAN DNS server, your own list is used and shown below. Custom uses your own lists for both.'));
 		o.value('auto', _('Automatic (the DNS servers of the WAN)'));
-		o.value('custom', _('Custom (the lists below)'));
+		o.value('custom', _('Custom (your own lists)'));
 		o.default = 'auto';
 
 		o = s.option(form.DynamicList, 'hosts4', _('IPv4 hosts to ping'));
 		o.datatype = 'ip4addr("nomask")';
 		o.placeholder = '1.1.1.1';
+		needsList(o, 'ipv4');
 
 		o = s.option(form.DynamicList, 'hosts6', _('IPv6 hosts to ping'));
 		o.datatype = 'ip6addr("nomask")';
 		o.placeholder = '2606:4700:4700::1111';
+		needsList(o, 'ipv6');
 
 		o = s.option(form.Value, 'dns_name', _('Name to resolve'));
 		o.datatype = 'hostname';
@@ -178,10 +190,12 @@ return view.extend({
 		o = s.option(form.DynamicList, 'dns_upstream4', _('IPv4 upstream DNS servers'));
 		o.datatype = 'ip4addr("nomask")';
 		o.placeholder = '1.1.1.1';
+		needsList(o, 'ipv4');
 
 		o = s.option(form.DynamicList, 'dns_upstream6', _('IPv6 upstream DNS servers'));
 		o.datatype = 'ip6addr("nomask")';
 		o.placeholder = '2606:4700:4700::1111';
+		needsList(o, 'ipv6');
 
 		/* tab 4: breathing light, only shown when scenario 1 breathes or breathing entries exist */
 		s = m.section(form.NamedSection, 'main', 'status_light');
